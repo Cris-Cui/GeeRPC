@@ -2,14 +2,27 @@ package main
 
 import (
 	"GeeRPC"
-	"fmt"
 	"log"
 	"net"
 	"sync"
 	"time"
 )
 
+type Foo int
+
+type Args struct{ Num1, Num2 int }
+
+// Sum 方法
+func (f Foo) Sum(args Args, reply *int) error {
+	*reply = args.Num1 + args.Num2
+	return nil
+}
+
 func startServer(addr chan string) {
+	var foo Foo
+	if err := GeeRPC.Register(&foo); err != nil {
+		log.Fatal("register error:", err)
+	}
 	// pick a free port
 	l, err := net.Listen("tcp", "localhost:8080")
 	if err != nil {
@@ -21,6 +34,7 @@ func startServer(addr chan string) {
 }
 
 func main() {
+	log.SetFlags(0)
 	addr := make(chan string) // 用于存储服务端地址
 	go startServer(addr)      // 异步启动服务端
 
@@ -34,12 +48,12 @@ func main() {
 		wg.Add(1) // 计数器加1
 		go func(i int) {
 			defer wg.Done() // 计数器减1
-			args := fmt.Sprintf("geerpc req %d", i)
-			var reply string
+			args := &Args{Num1: i, Num2: i * i}
+			var reply int
 			if err := client.Call("Foo.Sum", args, &reply); err != nil {
 				log.Fatal("call Foo.Sum error:", err)
 			}
-			log.Println("reply:", reply)
+			log.Printf("%d + %d = %d\n", args.Num1, args.Num2, reply)
 		}(i)
 	}
 	wg.Wait() // 阻塞，直到计数器变为0

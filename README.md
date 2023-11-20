@@ -1,4 +1,4 @@
 # GeeRPC
 
 ## UML类图
-![](./docs/codec.png)
+![](./docs/GeeRPC.png)
