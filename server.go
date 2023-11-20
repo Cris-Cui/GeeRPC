@@ -100,7 +100,7 @@ func (server *Server) readRequest(cc codec.Codec) (*request, error) {
 		return nil, err
 	}
 	req := &request{h: h}
-	// TODO: now we don't know the type of request argv
+	//TODO: now we don't know the type of request argv
 	// day 1, just suppose it's string
 	req.argv = reflect.New(reflect.TypeOf(""))
 	if err = cc.ReadBody(req.argv.Interface()); err != nil {
