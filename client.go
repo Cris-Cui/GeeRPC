@@ -5,6 +5,7 @@ package GeeRPC
 
 import (
 	"GeeRPC/codec"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"time"
 )
 
 // Call represents an active RPC.
@@ -55,6 +57,12 @@ type Client struct {
 	closing bool
 	// shutdown 错误发生连接被关闭
 	shutdown bool
+}
+
+// clientResult 存储client和error
+type clientResult struct {
+	client *Client
+	err    error
 }
 
 var _ io.Closer = (*Client)(nil)
@@ -180,9 +188,15 @@ func (client *Client) Go(serviceMethod string, args, reply interface{}, done cha
 }
 
 // Call 同步调用
-func (client *Client) Call(serviceMethod string, args, reply interface{}) error {
+func (client *Client) Call(ctx context.Context, serviceMethod string, args, reply interface{}) error {
 	call := <-client.Go(serviceMethod, args, reply, make(chan *Call, 1)).Done // 从done通道中阻塞读取响应
-	return call.Error
+	select {
+	case <-ctx.Done(): // 超时
+		client.removeCall(call.Seq)
+		return errors.New("rpc client: call failed: " + ctx.Err().Error())
+	case call := <-call.Done: // 读取响应
+		return call.Error
+	}
 }
 
 // NewClient 创建Client
@@ -221,7 +235,7 @@ func Dial(network, address string, opts ...*Option) (client *Client, err error) 
 	if err != nil {
 		return nil, err
 	}
-	conn, err := net.Dial(network, address) // 建立连接
+	conn, err := net.DialTimeout(network, address, opt.ConnectTimeout) // 建立连接
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +245,21 @@ func Dial(network, address string, opts ...*Option) (client *Client, err error) 
 			_ = conn.Close()
 		}
 	}()
-	return NewClient(conn, opt) // 创建客户端
+	ch := make(chan clientResult) // 创建通道
+	go func() {
+		client, err = NewClient(conn, opt) // 创建客户端
+		ch <- clientResult{client: client, err: err}
+	}()
+	if opt.ConnectTimeout == 0 { // 如果没有设置连接超时，则直接返回
+		result := <-ch
+		return result.client, result.err
+	}
+	select {
+	case <-time.After(opt.ConnectTimeout): // 超时
+		return nil, fmt.Errorf("rpc client: connect timeout: expect within %s", opt.ConnectTimeout)
+	case result := <-ch: // 从通道中读取结果
+		return result.client, result.err
+	}
 }
 
 // Close 关闭连接

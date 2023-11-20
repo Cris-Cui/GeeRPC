@@ -2,6 +2,7 @@ package main
 
 import (
 	"GeeRPC"
+	"context"
 	"log"
 	"net"
 	"sync"
@@ -50,11 +51,13 @@ func main() {
 			defer wg.Done() // 计数器减1
 			args := &Args{Num1: i, Num2: i * i}
 			var reply int
-			if err := client.Call("Foo.Sum", args, &reply); err != nil {
+			ctx, _ := context.WithTimeout(context.Background(), time.Second) // 设置超时时间
+			if err := client.Call(ctx, "Foo.Sum", args, &reply); err != nil {
 				log.Fatal("call Foo.Sum error:", err)
 			}
 			log.Printf("%d + %d = %d\n", args.Num1, args.Num2, reply)
 		}(i)
 	}
 	wg.Wait() // 阻塞，直到计数器变为0
+	runArr := []rune("hello world")
 }
