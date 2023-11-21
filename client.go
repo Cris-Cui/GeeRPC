@@ -5,6 +5,7 @@ package GeeRPC
 
 import (
 	"GeeRPC/codec"
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,8 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -278,10 +281,14 @@ func (client *Client) Close() error {
 // Option {
 // 	MagicNumber:    MagicNumber,
 // 	CodecType:      codec.GobType,
+//  ConnectTimeout time.Duration,
+//	HandleTimeout time.Duration
 // }
 //
 // 1. 如果opts为空或者opts[0]为空，则返回默认值
+//
 // 2. 如果opts长度大于1，则返回错误
+//
 // 3. 如果opts长度为1，则返回opts[0]
 func parseOptions(opts ...*Option) (*Option, error) {
 	// if opts is nil or pass nil as parameter
@@ -297,4 +304,74 @@ func parseOptions(opts ...*Option) (*Option, error) {
 		opt.CodecType = DefaultOption.CodecType
 	}
 	return opt, nil
+}
+
+// NewHTTPClient 创建HTTP客户端
+// TODO 存在已经关闭的连接
+func NewHTTPClient(conn net.Conn, opt *Option) (*Client, error) {
+	_, _ = io.WriteString(conn, fmt.Sprintf("CONNECT %s HTTP/1.0\n\n", defaultRPCPath)) // 发送HTTP请求
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: "CONNECT"})
+	if err == nil && resp.Status == connected { // 如果成功连接
+		return NewClient(conn, opt)
+	}
+	if err == nil { // 如果连接失败，则关闭连接
+		err = errors.New("unexpected HTTP response: " + resp.Status)
+	}
+	return nil, err
+}
+
+// DialHTTP 连接HTTP服务端
+func DialHTTP(network, address string, opts ...*Option) (*Client, error) {
+	return dialTimeout(NewHTTPClient, network, address, opts...)
+}
+
+type newClientFunc func(conn net.Conn, opt *Option) (client *Client, err error)
+
+// dialTimeout 带有超时的连接
+func dialTimeout(f newClientFunc, network, address string, opts ...*Option) (client *Client, err error) {
+	opt, err := parseOptions(opts...)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := net.DialTimeout(network, address, opt.ConnectTimeout)
+	if err != nil {
+		return nil, err
+	}
+	// close the connection if client is nil
+	defer func() {
+		if err != nil {
+			_ = conn.Close()
+		}
+	}()
+	ch := make(chan clientResult)
+
+	go func() {
+		client, err := f(conn, opt)
+		ch <- clientResult{client: client, err: err}
+	}()
+	if opt.ConnectTimeout == 0 {
+		result := <-ch // 如果连接超时设置为0，程序阻塞在这里，等待goroutine执行完毕返回结果
+		return result.client, result.err
+	}
+	select {
+	case <-time.After(opt.ConnectTimeout): // 超时
+		return nil, fmt.Errorf("rpc client: connect timeout: expect within %s", opt.ConnectTimeout)
+	case result := <-ch: // 从通道中读取结果
+		return result.client, result.err
+	}
+}
+
+func XDial(rpcAddr string, opts ...*Option) (*Client, error) {
+	// 即可处理TCP又可处理HTTP
+	parts := strings.Split(rpcAddr, "@") // 以@分割rpcAddr
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("rpc client: invalid format %s", rpcAddr)
+	}
+	protocol, addr := parts[0], parts[1] // 协议和地址
+	switch parts[0] {
+	case "http":
+		return DialHTTP("tcp", addr, opts...)
+	default:
+		return Dial(protocol, addr, opts...)
+	}
 }

@@ -61,3 +61,8 @@ func TestClient_Call(t *testing.T) {
 		_assert(err != nil && strings.Contains(err.Error(), "handle timeout"), "expect a timeout error")
 	})
 }
+
+// TestXDial 测试XDial
+func TestXDial(t *testing.T) {
+	// 测试
+}

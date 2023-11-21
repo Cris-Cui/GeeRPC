@@ -14,4 +14,26 @@ func (t *T) MethodName(argType T1, replyType *T2) error
 ![](./docs/GeeRPC.png)
 ![](./docs/codec.png)
 
-![img.png](https://geektutu.com/post/quick-go-rpc/rpc-procedure.jpg)
+![img.png](./docs/img.png)
+
+## 代码结构
+```
+├── client
+│   └── client.go
+├── codec
+│   ├── codec.go
+│   ├── codec_test.go
+│   ├── common.go
+│   ├── gob.go
+│   ├── json.go
+│   └── proto.go
+├── geerpc.go
+├── go.mod
+├── go.sum
+├── server
+│   └── server.go
+└── xclient
+    └── xclient.go
+```
+    
+## RPC 负载均衡

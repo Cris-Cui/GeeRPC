@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
@@ -15,6 +16,12 @@ import (
 )
 
 const MagicNumber = 0x3bef5c
+
+const (
+	connected        = "200 Connected to Gee RPC"
+	defaultRPCPath   = "/_geerpc_"
+	defaultDebugPath = "/debug/geerpc"
+)
 
 // Option 首部选项
 type Option struct {
@@ -52,7 +59,7 @@ func Register(rcvr interface{}) error {
 
 // Register publishes in the server the set of methods of the receiver value
 func (server *Server) Register(rcvr interface{}) error {
-	s := newService(rcvr)
+	s := newService(rcvr) // 创建服务
 	if _, dup := server.serviceMap.LoadOrStore(s.name, s); dup {
 		return fmt.Errorf("rpc: service already defined: %s", s.name)
 	}
@@ -99,10 +106,11 @@ func Accept(lis net.Listener) {
 	DefaultServer.Accept(lis)
 }
 
+// ServeConn 服务端处理连接
 func (server *Server) ServeConn(conn io.ReadWriteCloser) {
 	defer func() { conn.Close() }()
 	var opt Option
-	if err := json.NewDecoder(conn).Decode(&opt); err != nil {
+	if err := json.NewDecoder(conn).Decode(&opt); err != nil { // TODO EOF error
 		log.Println("RPC Server option error: ", err)
 		return
 	}
@@ -218,4 +226,34 @@ func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.
 	case <-called:
 		<-sent
 	}
+}
+
+// ServeHTTP implements an http.Handler that answers RPC requests.
+func (server *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != "CONNECT" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_, _ = io.WriteString(w, "405 must CONNECT\n")
+		return
+	}
+	conn, _, err := w.(http.Hijacker).Hijack() // 获取底层的网络连接, 用于后续的RPC通信
+	if err != nil {
+		log.Println("rpc hijacking", req.RemoteAddr, ":", err.Error())
+		return
+	}
+	// 通知客户端连接建立成功
+	_, _ = io.WriteString(conn, "HTTP/1.0 "+connected+"\n\n")
+	server.ServeConn(conn) // 服务端处理连接
+}
+
+// HandleHTTP 注册一个HTTP处理程序以处理rpcPath上的RPC消息。
+func (server *Server) HandleHTTP() {
+	http.Handle(defaultRPCPath, server)
+	http.Handle(defaultDebugPath, debugHTTP{server})
+	log.Println("rpc server debug path:", defaultDebugPath)
+}
+
+// HandleHTTP 在rpcPath上注册一个HTTP处理程序以处理RPC消息
+func HandleHTTP() {
+	DefaultServer.HandleHTTP()
 }

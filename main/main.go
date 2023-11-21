@@ -5,6 +5,7 @@ import (
 	"context"
 	"log"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -19,28 +20,20 @@ func (f Foo) Sum(args Args, reply *int) error {
 	return nil
 }
 
-func startServer(addr chan string) {
+func startServer(addrCh chan string) {
 	var foo Foo
-	if err := GeeRPC.Register(&foo); err != nil {
-		log.Fatal("register error:", err)
-	}
-	// pick a free port
-	l, err := net.Listen("tcp", "localhost:8080")
-	if err != nil {
-		log.Fatal("network error:", err)
-	}
-	log.Println("start rpc server on", l.Addr())
-	addr <- l.Addr().String()
-	GeeRPC.Accept(l)
+	l, _ := net.Listen("tcp", ":9999")
+	_ = GeeRPC.Register(&foo)
+	GeeRPC.HandleHTTP()
+	addrCh <- l.Addr().String()
+	_ = http.Serve(l, nil)
 }
 
-func main() {
-	log.SetFlags(0)
-	addr := make(chan string) // 用于存储服务端地址
-	go startServer(addr)      // 异步启动服务端
-
-	client, _ := GeeRPC.Dial("tcp", <-addr) // 连接服务端
-	defer func() { _ = client.Close() }()   // defer关闭连接
+func call(addr chan string) {
+	address := <-addr // addr是一个无缓冲的channel，所以这里会阻塞，直到服务端启动并将地址发送到chan中
+	log.Println("address:", address)
+	client, _ := GeeRPC.DialHTTP("tcp", address) // 连接服务端
+	defer func() { _ = client.Close() }()        // defer关闭连接
 
 	time.Sleep(time.Second)
 	// send request & receive response
@@ -51,13 +44,19 @@ func main() {
 			defer wg.Done() // 计数器减1
 			args := &Args{Num1: i, Num2: i * i}
 			var reply int
-			ctx, _ := context.WithTimeout(context.Background(), time.Second) // 设置超时时间
-			if err := client.Call(ctx, "Foo.Sum", args, &reply); err != nil {
+			//ctx, _ := context.WithTimeout(context.Background(), time.Second) // 设置超时时间
+			if err := client.Call(context.Background(), "Foo.Sum", args, &reply); err != nil {
 				log.Fatal("call Foo.Sum error:", err)
 			}
 			log.Printf("%d + %d = %d\n", args.Num1, args.Num2, reply)
 		}(i)
 	}
 	wg.Wait() // 阻塞，直到计数器变为0
-	runArr := []rune("hello world")
+}
+
+func main() {
+	log.SetFlags(log.Lshortfile | log.Ldate | log.Ltime)
+	addr := make(chan string) // 用于存储服务端地址
+	go call(addr)             // 异步调用call
+	startServer(addr)         // 启动服务端
 }
